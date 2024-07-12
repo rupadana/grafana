@@ -1,0 +1,69 @@
+version: "3.9"
+
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+  influxdb-storage: {}
+  chronograf-storage: {}
+
+services:
+  # Prometheus
+  # https://github.com/stefanprodan/dockprom
+  prometheus:
+    image: prom/prometheus:v2.45.3
+    container_name: prometheus
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=1y' # <= adjust the storage retention period of Prometheus
+    restart: unless-stopped
+    networks:
+      - proxy
+    labels:
+      org.label-schema.group: "monitoring"
+
+  # Grafana
+  # https://github.com/stefanprodan/dockprom
+  grafana:
+    image: grafana/grafana:10.3.1
+    container_name: grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=flant-statusmap-panel
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/ubuntu/monitor.json
+    restart: unless-stopped
+    networks:
+      - proxy
+    labels:
+      - "org.label-schema.group=monitoring"
+
+      # HTTP redirect to HTTPs
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.entrypoints=web"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.codecrafters.id`)"
+      - "traefik.http.middlewares.https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.ssl-header.headers.customrequestheaders.X-Forwarded-Proto=https"
+      
+      # HTTPs Service
+      - "traefik.http.routers.grafana.middlewares=https-redirect"
+      - "traefik.http.routers.grafana-secure.entrypoints=websecure"
+      - "traefik.http.routers.grafana-secure.rule=Host(`grafana.codecrafters.id`)"
+      - "traefik.http.routers.grafana-secure.tls=true"
+      - "traefik.http.routers.grafana-secure.service=grafana"
+      - "traefik.http.routers.grafana-secure.tls.certresolver=httpChallengeResolver"
+
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+  
+
+networks:
+  proxy:
+    external: true
